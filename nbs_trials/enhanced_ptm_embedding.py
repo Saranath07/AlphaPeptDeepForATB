@@ -148,13 +148,15 @@ def create_enhanced_mod_features():
     return enhanced_mod_to_feature
 
 
-def get_enhanced_batch_mod_feature(batch_df):
+def get_enhanced_batch_mod_feature(batch_df, device=None):
     """Get enhanced batch modification features
     
     Parameters
     ----------
     batch_df : pd.DataFrame
         Batch dataframe
+    device : torch.device, optional
+        Device to put the tensor on
         
     Returns
     -------
@@ -198,7 +200,10 @@ def get_enhanced_batch_mod_feature(batch_df):
                     enhanced_features[i, site, len(model_const['mod_elements'])+3] = charge_norm
                     enhanced_features[i, site, len(model_const['mod_elements'])+4] = size_norm
     
-    return torch.tensor(enhanced_features, dtype=torch.float32)
+    tensor = torch.tensor(enhanced_features, dtype=torch.float32)
+    if device is not None:
+        tensor = tensor.to(device)
+    return tensor
 
 
 class PTMAttentionLayer(torch.nn.Module):
@@ -362,7 +367,7 @@ class EnhancedMS2Model(torch.nn.Module):
         aa_indices : torch.Tensor
             Amino acid indices
         mod_x : torch.Tensor
-            Modification features
+            Modification features (standard format)
         charges : torch.Tensor
             Charges
         NCEs : torch.Tensor
@@ -375,14 +380,18 @@ class EnhancedMS2Model(torch.nn.Module):
         torch.Tensor
             Output tensor
         """
-        # Get sequence features
-        seq_features = self.input_nn(aa_indices, None)  # Don't pass mod_x yet
+        # Get sequence features with standard mod features
+        seq_features = self.input_nn(aa_indices, mod_x)
         
-        # Apply enhanced PTM embedding
-        enhanced_features = self.enhanced_ptm_embedding(mod_x, seq_features)
-        
-        # Apply dropout
-        in_x = self.dropout(enhanced_features)
+        # Use enhanced features if available (set by _get_features_from_batch_df)
+        if hasattr(self, 'enhanced_mod_features'):
+            # Apply enhanced PTM embedding
+            enhanced_features = self.enhanced_ptm_embedding(self.enhanced_mod_features, seq_features)
+            # Use the enhanced features
+            in_x = self.dropout(enhanced_features)
+        else:
+            # Fall back to standard features if enhanced features aren't available
+            in_x = self.dropout(seq_features)
         
         # Add metadata
         meta_x = self.meta_nn(charges, NCEs, instrument_indices).unsqueeze(1).repeat(1, in_x.size(1), 1)
@@ -413,7 +422,7 @@ class EnhancedMS2Model(torch.nn.Module):
 class EnhancedPDeepModel(pDeepModel):
     """pDeepModel with enhanced PTM embedding"""
     
-    def __init__(self, charged_frag_types=None, dropout=0.1, mask_modloss=False, device="cpu"):
+    def __init__(self, charged_frag_types=None, dropout=0.1, mask_modloss=False, device="cuda"):
         """Initialize the enhanced pDeepModel"""
         if charged_frag_types is None:
             frag_types = global_settings["model"]["frag_types"]
@@ -438,13 +447,15 @@ class EnhancedPDeepModel(pDeepModel):
         # Move model to device
         self.model.to(self.device)
     
-    def _get_features_from_batch_df(self, batch_df):
+    def _get_features_from_batch_df(self, batch_df, **kwargs):
         """Get features from batch dataframe
         
         Parameters
         ----------
         batch_df : pd.DataFrame
             Batch dataframe
+        **kwargs : dict
+            Additional keyword arguments (including reference_frag_df)
             
         Returns
         -------
@@ -452,9 +463,20 @@ class EnhancedPDeepModel(pDeepModel):
             Tuple of features
         """
         aa_indices = self._get_26aa_indice_features(batch_df)
-        mod_x = get_enhanced_batch_mod_feature(batch_df)
-        charges = self._as_tensor(batch_df.charge.values * self.charge_factor, dtype=torch.float32)
-        NCEs = self._as_tensor(batch_df.nce.values * self.NCE_factor, dtype=torch.float32)
+        
+        # Get standard mod features first (compatible with the model architecture)
+        mod_x = self._get_mod_features(batch_df)
+        
+        # Then get enhanced features for our custom processing
+        enhanced_mod_x = get_enhanced_batch_mod_feature(batch_df, device=self.device)
+        
+        # Store enhanced features as an attribute for use in forward method
+        self.enhanced_mod_features = enhanced_mod_x
+        
+        # Make sure charges and NCEs are 2D tensors (batch_size, 1)
+        charges = self._as_tensor(batch_df.charge.values * self.charge_factor, dtype=torch.float32).unsqueeze(1)
+        NCEs = self._as_tensor(batch_df.nce.values * self.NCE_factor, dtype=torch.float32).unsqueeze(1)
+        
         instrument_indices = self._as_tensor(
             batch_df.instrument_idx.values if "instrument_idx" in batch_df.columns else np.zeros(len(batch_df)),
             dtype=torch.long,
@@ -499,12 +521,12 @@ def compare_models(test_df, output_dir='results'):
     
     # Load standard model
     print("Loading standard model...")
-    standard_model_mgr = ModelManager(mask_modloss=False, device='cpu')
+    standard_model_mgr = ModelManager(mask_modloss=False, device='cuda')
     standard_model_mgr.load_installed_models('phos')
     
     # Create enhanced model
     print("Creating enhanced model...")
-    enhanced_model = EnhancedPDeepModel(mask_modloss=False, device='cpu')
+    enhanced_model = EnhancedPDeepModel(mask_modloss=False, device='cuda')
     
     # Copy weights from standard model to enhanced model
     # This ensures a fair comparison by starting with the same weights
@@ -522,7 +544,7 @@ def compare_models(test_df, output_dir='results'):
     standard_result = standard_model_mgr.predict_all(test_df.copy(), predict_items=['ms2'])
     
     # Create a custom model manager with enhanced model
-    enhanced_model_mgr = ModelManager(mask_modloss=False, device='cpu')
+    enhanced_model_mgr = ModelManager(mask_modloss=False, device='cuda')
     enhanced_model_mgr.ms2_model = enhanced_model
     
     # Predict with enhanced model
@@ -615,8 +637,11 @@ def analyze_ptm_attention(output_dir='results'):
     NCEs = torch.tensor(test_df.nce.values * 0.01, dtype=torch.float32)
     instrument_indices = torch.zeros(len(test_df), dtype=torch.long)
     
+    # Create standard mod features (zeros) for the input_nn
+    standard_mod_x = torch.zeros((len(test_df), max(test_df.nAA), len(model_const['mod_elements'])), dtype=torch.float32)
+    
     # Get sequence features
-    seq_features = enhanced_model.input_nn(aa_indices, None)
+    seq_features = enhanced_model.input_nn(aa_indices, standard_mod_x)
     
     # Get PTM embedding
     ptm_embedded = enhanced_model.enhanced_ptm_embedding.ptm_embedding(mod_x)

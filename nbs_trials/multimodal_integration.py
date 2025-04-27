@@ -106,12 +106,14 @@ def get_batch_structural_features(batch_df):
     batch_size = len(batch_df)
     max_len = max(batch_df.nAA)
     # 5 features: helix, sheet, coil, solvent_accessibility, flexibility
-    features = np.zeros((batch_size, max_len, 5))
+    # Add 2 to max_len for N-term and C-term padding to match sequence features
+    features = np.zeros((batch_size, max_len + 2, 5))
     
     for i, (_, row) in enumerate(batch_df.iterrows()):
         seq_len = row.nAA
         seq_features = get_structural_features_for_sequence(row.sequence)
-        features[i, :seq_len, :] = seq_features
+        # Place the features starting at index 1 (after N-term padding)
+        features[i, 1:seq_len+1, :] = seq_features
     
     return torch.tensor(features, dtype=torch.float32)
 
