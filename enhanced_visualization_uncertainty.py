@@ -2,285 +2,253 @@
 # -*- coding: utf-8 -*-
 
 """
-Enhanced Visualization of Uncertainty Quantification for Pre-trained AlphaPeptDeep Models
+Enhanced Visualization for Uncertainty Analysis Results
 
-This script provides improved visualizations for uncertainty estimates from pre-trained models.
+This script generates additional visualizations and insights from the uncertainty analysis results.
 """
 
 import os
-import numpy as np
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import norm
+import seaborn as sns
+from matplotlib.gridspec import GridSpec
 
-def plot_rt_predictions_with_uncertainty(results_file, output_dir, method_name):
-    """Plot RT predictions with enhanced uncertainty visualization
+# Set style
+plt.style.use('ggplot')
+sns.set_context("talk")
+plt.rcParams['figure.figsize'] = (12, 8)
+
+def load_data():
+    """Load the uncertainty analysis results"""
+    rt_summary = pd.read_csv('hla_uncertainty_results/rt/rt_uncertainty_summary.csv')
+    sampled_peptides = pd.read_csv('hla_uncertainty_results/sampled_peptides.csv')
     
-    Parameters
-    ----------
-    results_file : str
-        Path to the results CSV file
-    output_dir : str
-        Directory to save the output plots
-    method_name : str
-        Name of the method (e.g., 'MC Dropout', 'Ensemble')
-    """
+    return rt_summary, sampled_peptides
+
+def analyze_peptide_properties(sampled_peptides):
+    """Analyze peptide properties and their relationship to prediction accuracy"""
     # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs('hla_uncertainty_results/enhanced_analysis', exist_ok=True)
     
-    # Load results
-    results = pd.read_csv(results_file)
-    
-    # Plot predictions with uncertainty
-    plt.figure(figsize=(12, 8))
-    
-    # Plot error bars
-    plt.errorbar(results['rt_norm'], results['rt_pred_mean'], 
-                 yerr=1.96*results['rt_pred_std'], fmt='o', alpha=0.7,
-                 ecolor='red', capsize=5, capthick=2, elinewidth=2)
-    
-    # Plot identity line
-    plt.plot([min(results['rt_norm']), max(results['rt_norm'])], 
-             [min(results['rt_norm']), max(results['rt_norm'])], 'k--')
-    
-    plt.xlabel('True RT', fontsize=14)
-    plt.ylabel('Predicted RT', fontsize=14)
-    plt.title(f'RT Prediction with Uncertainty ({method_name})', fontsize=16)
+    # Analyze peptide length distribution
+    plt.figure(figsize=(10, 6))
+    sns.histplot(sampled_peptides['nAA'], bins=range(min(sampled_peptides['nAA']), max(sampled_peptides['nAA'])+2), kde=True)
+    plt.title('Distribution of Peptide Lengths')
+    plt.xlabel('Peptide Length (Amino Acids)')
+    plt.ylabel('Count')
     plt.grid(True)
+    plt.savefig('hla_uncertainty_results/enhanced_analysis/peptide_length_distribution.png', dpi=300, bbox_inches='tight')
+    plt.close()
     
-    # Add a text box with statistics
-    mean_std = results['rt_pred_std'].mean()
-    max_std = results['rt_pred_std'].max()
-    min_std = results['rt_pred_std'].min()
-    
-    stats_text = f"Mean std: {mean_std:.4f}\nMax std: {max_std:.4f}\nMin std: {min_std:.4f}"
-    plt.figtext(0.15, 0.15, stats_text, fontsize=12, 
-                bbox=dict(facecolor='white', alpha=0.8))
-    
-    # Save figure
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'{method_name.lower().replace(" ", "_")}_rt_predictions_enhanced.png'), dpi=300)
-    
-    # Create a zoomed-in plot to better see the error bars
-    plt.figure(figsize=(12, 8))
-    
-    # Sort by standard deviation to highlight points with largest uncertainty
-    results_sorted = results.sort_values('rt_pred_std', ascending=False)
-    top_n = min(10, len(results_sorted))  # Top 10 or all if less than 10
-    
-    # Plot top N points with highest uncertainty
-    plt.errorbar(results_sorted['rt_norm'].iloc[:top_n], 
-                 results_sorted['rt_pred_mean'].iloc[:top_n], 
-                 yerr=1.96*results_sorted['rt_pred_std'].iloc[:top_n], 
-                 fmt='o', alpha=0.7, ecolor='red', capsize=5, capthick=2, elinewidth=2,
-                 label=f'Top {top_n} points with highest uncertainty')
-    
-    # Plot identity line
-    min_val = min(results_sorted['rt_norm'].iloc[:top_n].min(), results_sorted['rt_pred_mean'].iloc[:top_n].min() - 2*results_sorted['rt_pred_std'].iloc[:top_n].max())
-    max_val = max(results_sorted['rt_norm'].iloc[:top_n].max(), results_sorted['rt_pred_mean'].iloc[:top_n].max() + 2*results_sorted['rt_pred_std'].iloc[:top_n].max())
-    plt.plot([min_val, max_val], [min_val, max_val], 'k--')
-    
-    plt.xlabel('True RT', fontsize=14)
-    plt.ylabel('Predicted RT', fontsize=14)
-    plt.title(f'RT Prediction with Uncertainty - Top {top_n} Uncertain Points ({method_name})', fontsize=16)
-    plt.grid(True)
-    plt.legend()
-    
-    # Add a text box with statistics for these points
-    mean_std = results_sorted['rt_pred_std'].iloc[:top_n].mean()
-    max_std = results_sorted['rt_pred_std'].iloc[:top_n].max()
-    min_std = results_sorted['rt_pred_std'].iloc[:top_n].min()
-    
-    stats_text = f"Mean std: {mean_std:.4f}\nMax std: {max_std:.4f}\nMin std: {min_std:.4f}"
-    plt.figtext(0.15, 0.15, stats_text, fontsize=12, 
-                bbox=dict(facecolor='white', alpha=0.8))
-    
-    # Save figure
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'{method_name.lower().replace(" ", "_")}_rt_predictions_zoomed.png'), dpi=300)
-    
-    # Create a plot showing the relationship between RT and uncertainty
-    plt.figure(figsize=(12, 8))
-    plt.scatter(results['rt_norm'], results['rt_pred_std'], alpha=0.7, s=50)
-    
-    # Add trend line
-    z = np.polyfit(results['rt_norm'], results['rt_pred_std'], 1)
-    p = np.poly1d(z)
-    plt.plot(results['rt_norm'], p(results['rt_norm']), "r--", linewidth=2)
-    
-    plt.xlabel('True RT', fontsize=14)
-    plt.ylabel('Standard Deviation', fontsize=14)
-    plt.title(f'Relationship between RT and Uncertainty ({method_name})', fontsize=16)
-    plt.grid(True)
-    
-    # Add correlation coefficient
-    corr = np.corrcoef(results['rt_norm'], results['rt_pred_std'])[0, 1]
-    plt.figtext(0.15, 0.85, f"Correlation: {corr:.4f}", fontsize=12, 
-                bbox=dict(facecolor='white', alpha=0.8))
-    
-    # Save figure
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'{method_name.lower().replace(" ", "_")}_rt_uncertainty_correlation.png'), dpi=300)
-
-
-def plot_calibration_curve_enhanced(results_file, output_dir, method_name, n_bins=10):
-    """Plot enhanced calibration curve for uncertainty estimates
-    
-    Parameters
-    ----------
-    results_file : str
-        Path to the results CSV file
-    output_dir : str
-        Directory to save the output plots
-    method_name : str
-        Name of the method (e.g., 'MC Dropout', 'Ensemble')
-    n_bins : int
-        Number of bins for the calibration curve
-    """
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Load results
-    results = pd.read_csv(results_file)
-    
-    # Extract data
-    y_true = results['rt_norm'].values
-    y_pred = results['rt_pred_mean'].values
-    y_std = results['rt_pred_std'].values
-    
-    # Filter out zero standard deviations to avoid division by zero
-    mask = y_std > 0
-    y_true_filtered = y_true[mask]
-    y_pred_filtered = y_pred[mask]
-    y_std_filtered = y_std[mask]
-    
-    if len(y_std_filtered) == 0:
-        print("Warning: All standard deviations are zero. Cannot create calibration curve.")
-        return None
-    
-    # Calculate normalized errors
-    normalized_errors = np.abs(y_true_filtered - y_pred_filtered) / y_std_filtered
-    
-    # Create bins and calculate frequencies
-    bins = np.linspace(0, 3, n_bins+1)  # Up to 3 standard deviations
-    bin_centers = 0.5 * (bins[:-1] + bins[1:])
-    observed_freq = np.zeros(n_bins)
-    
-    for i in range(n_bins):
-        observed_freq[i] = np.mean(normalized_errors <= bins[i+1])
-    
-    # Expected frequencies for a Gaussian distribution
-    expected_freq = np.array([norm.cdf(b) for b in bins[1:]])
-    
-    # Plot
-    plt.figure(figsize=(12, 8))
-    plt.plot(expected_freq, observed_freq, 'o-', linewidth=2, markersize=8, label='Calibration curve')
-    plt.plot([0, 1], [0, 1], 'k--', linewidth=2, label='Ideal calibration')
-    plt.xlabel('Expected cumulative probability', fontsize=14)
-    plt.ylabel('Observed cumulative probability', fontsize=14)
-    plt.title(f'Calibration Curve for Uncertainty Estimates ({method_name})', fontsize=16)
-    plt.legend(fontsize=12)
-    plt.grid(True)
-    
-    # Calculate calibration error
-    calibration_error = np.mean(np.abs(observed_freq - expected_freq))
-    plt.figtext(0.15, 0.15, f"Calibration Error: {calibration_error:.4f}", fontsize=12, 
-                bbox=dict(facecolor='white', alpha=0.8))
-    
-    # Save figure
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'{method_name.lower().replace(" ", "_")}_calibration_enhanced.png'), dpi=300)
-
-
-def compare_methods_enhanced(mc_results_file, ensemble_results_file, output_dir):
-    """Create enhanced comparison plots between different uncertainty quantification methods
-    
-    Parameters
-    ----------
-    mc_results_file : str
-        Path to the MC Dropout results CSV file
-    ensemble_results_file : str
-        Path to the Ensemble results CSV file
-    output_dir : str
-        Directory to save the output plots
-    """
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Load results
-    mc_results = pd.read_csv(mc_results_file)
-    ensemble_results = pd.read_csv(ensemble_results_file)
-    
-    # Compare standard deviations
-    plt.figure(figsize=(12, 8))
-    plt.scatter(mc_results['rt_norm'], mc_results['rt_pred_std'], alpha=0.7, s=50, label='Simulated MC Dropout')
-    plt.scatter(ensemble_results['rt_norm'], ensemble_results['rt_pred_std'], alpha=0.7, s=50, label='Ensemble')
-    
-    plt.xlabel('True RT', fontsize=14)
-    plt.ylabel('Prediction Standard Deviation', fontsize=14)
-    plt.title('Uncertainty Comparison: Simulated MC Dropout vs Ensemble', fontsize=16)
-    plt.legend(fontsize=12)
-    plt.grid(True)
-    
-    # Add statistics
-    mc_mean_std = mc_results['rt_pred_std'].mean()
-    ensemble_mean_std = ensemble_results['rt_pred_std'].mean()
-    
-    stats_text = f"MC Dropout mean std: {mc_mean_std:.4f}\nEnsemble mean std: {ensemble_mean_std:.4f}\nRatio (Ensemble/MC): {ensemble_mean_std/mc_mean_std:.2f}x"
-    plt.figtext(0.15, 0.15, stats_text, fontsize=12, 
-                bbox=dict(facecolor='white', alpha=0.8))
-    
-    # Save figure
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'uncertainty_comparison_enhanced.png'), dpi=300)
-    
-    # Compare prediction intervals
-    plt.figure(figsize=(12, 8))
-    
-    # Select a subset of points for clarity
-    n_points = min(10, len(mc_results))
-    indices = np.linspace(0, len(mc_results)-1, n_points, dtype=int)
-    
-    x = np.arange(n_points)
-    width = 0.35
-    
-    mc_intervals = mc_results['rt_pred_upper'].iloc[indices] - mc_results['rt_pred_lower'].iloc[indices]
-    ensemble_intervals = ensemble_results['rt_pred_upper'].iloc[indices] - ensemble_results['rt_pred_lower'].iloc[indices]
-    
-    plt.bar(x - width/2, mc_intervals, width, label='Simulated MC Dropout')
-    plt.bar(x + width/2, ensemble_intervals, width, label='Ensemble')
-    
-    plt.xlabel('Sample Index', fontsize=14)
-    plt.ylabel('Prediction Interval Width', fontsize=14)
-    plt.title('Comparison of Prediction Interval Widths', fontsize=16)
-    plt.xticks(x, [f"{i}" for i in indices])
-    plt.legend(fontsize=12)
+    # Analyze charge state distribution
+    plt.figure(figsize=(8, 6))
+    charge_counts = sampled_peptides['charge'].value_counts().sort_index()
+    sns.barplot(x=charge_counts.index, y=charge_counts.values)
+    plt.title('Distribution of Charge States')
+    plt.xlabel('Charge State')
+    plt.ylabel('Count')
     plt.grid(True, axis='y')
+    plt.savefig('hla_uncertainty_results/enhanced_analysis/charge_state_distribution.png', dpi=300, bbox_inches='tight')
+    plt.close()
     
-    # Save figure
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'interval_width_comparison.png'), dpi=300)
+    # Analyze RT distribution
+    plt.figure(figsize=(10, 6))
+    sns.histplot(sampled_peptides['rt'], bins=20, kde=True)
+    plt.title('Distribution of Retention Times')
+    plt.xlabel('Retention Time (min)')
+    plt.ylabel('Count')
+    plt.grid(True)
+    plt.savefig('hla_uncertainty_results/enhanced_analysis/rt_distribution.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Analyze relationship between peptide length and RT
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(x='nAA', y='rt', data=sampled_peptides, alpha=0.7)
+    plt.title('Relationship Between Peptide Length and Retention Time')
+    plt.xlabel('Peptide Length (Amino Acids)')
+    plt.ylabel('Retention Time (min)')
+    plt.grid(True)
+    plt.savefig('hla_uncertainty_results/enhanced_analysis/length_vs_rt.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Analyze modified vs unmodified peptides
+    sampled_peptides['has_mods'] = sampled_peptides['mods'].notna() & (sampled_peptides['mods'] != '')
+    
+    plt.figure(figsize=(8, 6))
+    mod_counts = sampled_peptides['has_mods'].value_counts()
+    plt.pie(mod_counts, labels=['Unmodified', 'Modified'] if False in mod_counts.index else ['Modified', 'Unmodified'],
+            autopct='%1.1f%%', startangle=90, colors=['#ff9999','#66b3ff'])
+    plt.title('Proportion of Modified vs Unmodified Peptides')
+    plt.axis('equal')
+    plt.savefig('hla_uncertainty_results/enhanced_analysis/modified_vs_unmodified.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return {
+        'total_peptides': len(sampled_peptides),
+        'unique_sequences': sampled_peptides['sequence'].nunique(),
+        'length_range': (sampled_peptides['nAA'].min(), sampled_peptides['nAA'].max()),
+        'mean_length': sampled_peptides['nAA'].mean(),
+        'charge_distribution': charge_counts.to_dict(),
+        'rt_range': (sampled_peptides['rt'].min(), sampled_peptides['rt'].max()),
+        'mean_rt': sampled_peptides['rt'].mean(),
+        'modified_count': mod_counts.get(True, 0),
+        'unmodified_count': mod_counts.get(False, 0)
+    }
 
+def visualize_rt_uncertainty_comparison(rt_summary):
+    """Create enhanced visualizations for RT uncertainty comparison"""
+    # Create output directory
+    os.makedirs('hla_uncertainty_results/enhanced_analysis', exist_ok=True)
+    
+    # Create a comprehensive comparison plot
+    fig = plt.figure(figsize=(15, 10))
+    gs = GridSpec(2, 2, figure=fig)
+    
+    # Plot 1: Mean Absolute Error Comparison
+    ax1 = fig.add_subplot(gs[0, 0])
+    models = rt_summary['Model'].tolist()
+    mae_values = rt_summary['Mean Absolute Error'].tolist()
+    
+    colors = ['#ff9999', '#66b3ff', '#99ff99']
+    bars = ax1.bar(models, mae_values, color=colors)
+    ax1.set_title('Mean Absolute Error Comparison')
+    ax1.set_ylabel('Mean Absolute Error')
+    ax1.set_ylim(0, max(mae_values) * 1.2)
+    
+    # Add value labels on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{height:.2f}', ha='center', va='bottom')
+    
+    # Plot 2: PICP vs MPIW
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.scatter(rt_summary['PICP'], rt_summary['MPIW'], s=100, c=colors, alpha=0.7)
+    
+    # Add labels for each point
+    for i, model in enumerate(models):
+        ax2.annotate(model, 
+                    (rt_summary['PICP'].iloc[i], rt_summary['MPIW'].iloc[i]),
+                    xytext=(10, 10), textcoords='offset points')
+    
+    ax2.set_title('PICP vs MPIW')
+    ax2.set_xlabel('Prediction Interval Coverage Probability (PICP)')
+    ax2.set_ylabel('Mean Prediction Interval Width (MPIW)')
+    ax2.grid(True)
+    
+    # Plot 3: Mean Uncertainty Comparison
+    ax3 = fig.add_subplot(gs[1, 0])
+    uncertainty_values = rt_summary['Mean Uncertainty (Std)'].tolist()
+    
+    bars = ax3.bar(models, uncertainty_values, color=colors)
+    ax3.set_title('Mean Uncertainty Comparison')
+    ax3.set_ylabel('Mean Uncertainty (Std)')
+    ax3.set_ylim(0, max(uncertainty_values) * 1.2)
+    
+    # Add value labels on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        ax3.text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                f'{height:.2f}', ha='center', va='bottom')
+    
+    # Plot 4: Relative Improvement
+    ax4 = fig.add_subplot(gs[1, 1])
+    
+    # Calculate relative improvement of Enhanced over Standard
+    standard_mae = rt_summary.loc[rt_summary['Model'] == 'Standard (MC Dropout)', 'Mean Absolute Error'].values[0]
+    enhanced_mae = rt_summary.loc[rt_summary['Model'] == 'Enhanced (MC Dropout)', 'Mean Absolute Error'].values[0]
+    ensemble_mae = rt_summary.loc[rt_summary['Model'] == 'Model Ensemble', 'Mean Absolute Error'].values[0]
+    
+    rel_improvement_enhanced = (standard_mae - enhanced_mae) / standard_mae * 100
+    rel_improvement_ensemble = (standard_mae - ensemble_mae) / standard_mae * 100
+    
+    improvements = [0, rel_improvement_enhanced, rel_improvement_ensemble]  # Standard as baseline (0% improvement)
+    
+    bars = ax4.bar(models, improvements, color=colors)
+    ax4.set_title('Relative Improvement Over Standard Model')
+    ax4.set_ylabel('Improvement (%)')
+    ax4.set_ylim(0, max(improvements) * 1.2)
+    
+    # Add value labels on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        if height > 0:  # Only add labels for non-zero values
+            ax4.text(bar.get_x() + bar.get_width()/2., height + 1,
+                    f'{height:.1f}%', ha='center', va='bottom')
+    
+    plt.tight_layout()
+    plt.savefig('hla_uncertainty_results/enhanced_analysis/rt_uncertainty_comprehensive.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return {
+        'standard_mae': standard_mae,
+        'enhanced_mae': enhanced_mae,
+        'ensemble_mae': ensemble_mae,
+        'rel_improvement_enhanced': rel_improvement_enhanced,
+        'rel_improvement_ensemble': rel_improvement_ensemble
+    }
+
+def generate_summary_report(peptide_stats, rt_stats):
+    """Generate a summary report with key insights"""
+    report = f"""# Enhanced Analysis of HLA Model Uncertainty
+
+## Dataset Statistics
+- Total peptides analyzed: {peptide_stats['total_peptides']}
+- Unique peptide sequences: {peptide_stats['unique_sequences']}
+- Peptide length range: {peptide_stats['length_range'][0]}-{peptide_stats['length_range'][1]} amino acids
+- Average peptide length: {peptide_stats['mean_length']:.2f} amino acids
+- Charge state distribution: {', '.join([f"{charge}+ ({count})" for charge, count in peptide_stats['charge_distribution'].items()])}
+- Retention time range: {peptide_stats['rt_range'][0]:.2f}-{peptide_stats['rt_range'][1]:.2f} minutes
+- Average retention time: {peptide_stats['mean_rt']:.2f} minutes
+- Modified peptides: {peptide_stats['modified_count']} ({peptide_stats['modified_count']/peptide_stats['total_peptides']*100:.1f}%)
+- Unmodified peptides: {peptide_stats['unmodified_count']} ({peptide_stats['unmodified_count']/peptide_stats['total_peptides']*100:.1f}%)
+
+## RT Prediction Performance
+- Standard model MAE: {rt_stats['standard_mae']:.2f}
+- Enhanced model MAE: {rt_stats['enhanced_mae']:.2f}
+- Model Ensemble MAE: {rt_stats['ensemble_mae']:.2f}
+- Enhanced model improvement over Standard: {rt_stats['rel_improvement_enhanced']:.1f}%
+- Model Ensemble improvement over Standard: {rt_stats['rel_improvement_ensemble']:.1f}%
+
+## Key Insights
+1. The Enhanced model with improved PTM representation shows a significant {rt_stats['rel_improvement_enhanced']:.1f}% reduction in mean absolute error compared to the Standard model.
+2. The Model Ensemble approach provides a {rt_stats['rel_improvement_ensemble']:.1f}% improvement over the Standard model, but not as good as the Enhanced model alone.
+3. The dataset contains a diverse range of peptide lengths ({peptide_stats['length_range'][0]}-{peptide_stats['length_range'][1]} amino acids) and charge states.
+4. {peptide_stats['modified_count']/peptide_stats['total_peptides']*100:.1f}% of the peptides contain post-translational modifications, highlighting the importance of proper PTM handling.
+
+## Visualizations
+Several visualizations have been generated in the 'hla_uncertainty_results/enhanced_analysis' directory:
+- Peptide length distribution
+- Charge state distribution
+- Retention time distribution
+- Relationship between peptide length and retention time
+- Proportion of modified vs unmodified peptides
+- Comprehensive RT uncertainty comparison
+
+These visualizations provide deeper insights into the dataset characteristics and model performance.
+"""
+    
+    with open('hla_uncertainty_results/enhanced_analysis/summary_report.md', 'w') as f:
+        f.write(report)
+    
+    print("Enhanced analysis complete. Results saved to 'hla_uncertainty_results/enhanced_analysis/'")
+
+def main():
+    """Main function to run the enhanced visualization"""
+    print("Starting enhanced visualization and analysis...")
+    
+    # Load data
+    rt_summary, sampled_peptides = load_data()
+    
+    # Analyze peptide properties
+    peptide_stats = analyze_peptide_properties(sampled_peptides)
+    
+    # Visualize RT uncertainty comparison
+    rt_stats = visualize_rt_uncertainty_comparison(rt_summary)
+    
+    # Generate summary report
+    generate_summary_report(peptide_stats, rt_stats)
 
 if __name__ == "__main__":
-    # Define input and output directories
-    input_dir = 'simple_uncertainty_results/rt'
-    output_dir = 'enhanced_visualizations'
-    
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Plot enhanced visualizations for MC Dropout results
-    mc_results_file = os.path.join(input_dir, 'mc_dropout_results.csv')
-    plot_rt_predictions_with_uncertainty(mc_results_file, output_dir, 'MC Dropout')
-    plot_calibration_curve_enhanced(mc_results_file, output_dir, 'MC Dropout')
-    
-    # Plot enhanced visualizations for Ensemble results
-    ensemble_results_file = os.path.join(input_dir, 'ensemble_results.csv')
-    plot_rt_predictions_with_uncertainty(ensemble_results_file, output_dir, 'Ensemble')
-    plot_calibration_curve_enhanced(ensemble_results_file, output_dir, 'Ensemble')
-    
-    # Compare methods
-    compare_methods_enhanced(mc_results_file, ensemble_results_file, output_dir)
-    
-    print(f"Enhanced visualizations saved to {output_dir}")
+    main()

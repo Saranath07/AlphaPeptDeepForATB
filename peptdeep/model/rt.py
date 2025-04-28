@@ -188,3 +188,71 @@ class AlphaRTModel(model_interface.ModelInterface):
         intercept = eval_df.intercept.values[0]
         precursor_df["irt_pred"] = precursor_df.rt_pred * slope + intercept
         return precursor_df
+        
+    def train_model(
+        self,
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame = None,
+        epochs: int = 10,
+        batch_size: int = 64,
+        learning_rate: float = 0.001,
+        **kwargs
+    ):
+        """
+        Train the RT model
+        
+        Parameters
+        ----------
+        train_df : pd.DataFrame
+            Training data
+        val_df : pd.DataFrame, optional
+            Validation data
+        epochs : int
+            Number of epochs
+        batch_size : int
+            Batch size
+        learning_rate : float
+            Learning rate
+        """
+        # Normalize RT values
+        train_df = train_df.copy()
+        rt_mean = train_df['rt'].mean()
+        rt_std = train_df['rt'].std()
+        train_df['rt_norm'] = (train_df['rt'] - rt_mean) / rt_std
+        
+        # Ensure mods and mod_sites columns are properly formatted
+        if 'mods' not in train_df.columns or train_df['mods'].isna().any():
+            train_df['mods'] = train_df['mods'].fillna('')
+        
+        if 'mod_sites' not in train_df.columns or train_df['mod_sites'].isna().any():
+            train_df['mod_sites'] = train_df['mod_sites'].fillna('')
+        
+        if val_df is not None:
+            val_df = val_df.copy()
+            val_df['rt_norm'] = (val_df['rt'] - rt_mean) / rt_std
+            
+            # Ensure mods and mod_sites columns are properly formatted in val_df
+            if 'mods' not in val_df.columns or val_df['mods'].isna().any():
+                val_df['mods'] = val_df['mods'].fillna('')
+            
+            if 'mod_sites' not in val_df.columns or val_df['mod_sites'].isna().any():
+                val_df['mod_sites'] = val_df['mod_sites'].fillna('')
+        
+        # Store validation data separately
+        validation_data = val_df
+        
+        # Train the model without passing val_df to the train method
+        result = self.train(
+            train_df,
+            batch_size=batch_size,
+            epoch=epochs,
+            lr=learning_rate,
+            **kwargs
+        )
+        
+        # If validation data is provided, evaluate the model
+        if validation_data is not None:
+            print("Evaluating on validation data...")
+            self.test(validation_data, batch_size=batch_size)
+        
+        return result

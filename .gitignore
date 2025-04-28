@@ -140,4 +140,4 @@ dmypy.json
 .pyre/
 
 pretrained_models/
-
+HLA_DDA_Rescore/

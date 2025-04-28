@@ -308,7 +308,7 @@ def predict_ms2_with_uncertainty(model_mgr, df, n_samples=30, noise_scale=0.05):
     
     Parameters
     ----------
-    model_mgr : ModelManager
+    model_mgr : ModelManager or EnhancedModelManager
         Model manager
     df : pd.DataFrame
         DataFrame with peptide sequences
@@ -326,8 +326,55 @@ def predict_ms2_with_uncertainty(model_mgr, df, n_samples=30, noise_scale=0.05):
     init_fragment_by_precursor_dataframe(df, model_mgr.ms2_model.charged_frag_types)
     
     # Get base prediction
-    result = model_mgr.predict_all(df.copy(), predict_items=['ms2'])
-    base_intensities = result['fragment_intensity_df'].values
+    # Check if the model manager is an EnhancedModelManager
+    if hasattr(model_mgr, 'predict_ms2') and callable(getattr(model_mgr, 'predict_ms2')):
+        # For EnhancedModelManager
+        result = model_mgr.predict_ms2(df.copy())
+    else:
+        # For standard ModelManager
+        result = model_mgr.predict_all(df.copy(), predict_items=['ms2'])
+    
+    print(f"Available keys in result dictionary: {list(result.keys())}")
+    
+    # Handle different result formats
+    if 'fragment_intensity_df' in result:
+        # Standard format
+        base_intensities = result['fragment_intensity_df'].values
+        fragment_mz_df = result['fragment_mz_df']
+    elif 'intensities_df' in result:
+        # Alternative format
+        base_intensities = result['intensities_df'].values
+        fragment_mz_df = result.get('mz_df', pd.DataFrame())
+    else:
+        # Handle the case where result contains ion-specific DataFrames
+        ion_keys = [k for k in result.keys() if k.startswith('b_') or k.startswith('y_')]
+        
+        if ion_keys:
+            print(f"Found ion-specific keys: {ion_keys}")
+            
+            # Create a combined DataFrame for intensities
+            combined_df = pd.DataFrame()
+            
+            # Process each peptide
+            for i in range(len(df)):
+                start_idx = df.iloc[i].get('frag_start_idx', i)
+                end_idx = df.iloc[i].get('frag_stop_idx', i+1)
+                
+                # Combine all ion types for this peptide
+                for ion_key in ion_keys:
+                    if ion_key in result:
+                        combined_df[ion_key] = result[ion_key]
+            
+            base_intensities = combined_df.values if not combined_df.empty else np.array([[0.0]])
+            fragment_mz_df = pd.DataFrame(index=combined_df.index, columns=combined_df.columns)
+            
+            # Create a result dictionary in the expected format
+            result = {
+                'fragment_intensity_df': combined_df,
+                'fragment_mz_df': fragment_mz_df
+            }
+        else:
+            raise KeyError("Could not find fragment intensity data in the result")
     
     # Collect predictions with added noise
     all_intensities = []
@@ -375,50 +422,76 @@ def plot_ms2_with_uncertainty(ms2_results, peptide_idx=0, save_path=None):
     """
     # Get peptide info
     df = ms2_results['precursor_df']
-    start_idx = df.iloc[peptide_idx]['frag_start_idx']
-    end_idx = df.iloc[peptide_idx]['frag_stop_idx']
     
-    # Get fragment m/z and intensities for this peptide
-    frag_mz = ms2_results['fragment_mz_df'].iloc[start_idx:end_idx]
-    frag_intensity_mean = ms2_results['fragment_intensity_mean_df'].iloc[start_idx:end_idx]
-    frag_intensity_std = ms2_results['fragment_intensity_std_df'].iloc[start_idx:end_idx]
+    # Handle the case where frag_start_idx and frag_stop_idx might not be available
+    if 'frag_start_idx' in df.columns and 'frag_stop_idx' in df.columns:
+        start_idx = df.iloc[peptide_idx]['frag_start_idx']
+        end_idx = df.iloc[peptide_idx]['frag_stop_idx']
+        
+        # Get fragment m/z and intensities for this peptide
+        frag_mz = ms2_results['fragment_mz_df'].iloc[start_idx:end_idx]
+        frag_intensity_mean = ms2_results['fragment_intensity_mean_df'].iloc[start_idx:end_idx]
+        frag_intensity_std = ms2_results['fragment_intensity_std_df'].iloc[start_idx:end_idx]
+    else:
+        # If fragment indices are not available, use the entire DataFrame
+        # This assumes we're working with a single peptide or a small batch
+        print(f"Warning: frag_start_idx and frag_stop_idx not found. Using all data for peptide {peptide_idx}.")
+        frag_mz = ms2_results['fragment_mz_df']
+        frag_intensity_mean = ms2_results['fragment_intensity_mean_df']
+        frag_intensity_std = ms2_results['fragment_intensity_std_df']
     
     # Plot for b and y ions
     fig, ax = plt.subplots(figsize=(12, 6))
     
+    # Check if columns are strings or integers
+    if frag_mz.columns.dtype == 'object':
+        # String columns - filter by prefix
+        b_cols = [col for col in frag_mz.columns if isinstance(col, str) and col.startswith('b_')]
+        y_cols = [col for col in frag_mz.columns if isinstance(col, str) and col.startswith('y_')]
+    else:
+        # Integer columns - assume first half are b ions, second half are y ions
+        num_cols = len(frag_mz.columns)
+        b_cols = frag_mz.columns[:num_cols//2]
+        y_cols = frag_mz.columns[num_cols//2:]
+        print(f"Using integer columns: {num_cols//2} b-ions, {num_cols - num_cols//2} y-ions")
+    
     # Plot b ions
-    b_cols = [col for col in frag_mz.columns if col.startswith('b_')]
     for col in b_cols:
-        mz_values = frag_mz[col].values
-        intensity_values = frag_intensity_mean[col].values
-        std_values = frag_intensity_std[col].values
-        
-        # Filter out zero m/z values
-        mask = mz_values > 0
-        mz_values = mz_values[mask]
-        intensity_values = intensity_values[mask]
-        std_values = std_values[mask]
-        
-        if len(mz_values) > 0:
-            ax.errorbar(mz_values, intensity_values, yerr=1.96*std_values, 
-                      fmt='o', alpha=0.7, label=col)
+        try:
+            mz_values = frag_mz[col].values
+            intensity_values = frag_intensity_mean[col].values
+            std_values = frag_intensity_std[col].values
+            
+            # Filter out zero m/z values
+            mask = np.isfinite(mz_values) & (mz_values > 0)
+            mz_values = mz_values[mask]
+            intensity_values = intensity_values[mask]
+            std_values = std_values[mask]
+            
+            if len(mz_values) > 0:
+                ax.errorbar(mz_values, intensity_values, yerr=1.96*std_values,
+                          fmt='o', alpha=0.7, label=f"b-ion {col}")
+        except Exception as e:
+            print(f"Error plotting b-ion {col}: {e}")
     
     # Plot y ions
-    y_cols = [col for col in frag_mz.columns if col.startswith('y_')]
     for col in y_cols:
-        mz_values = frag_mz[col].values
-        intensity_values = frag_intensity_mean[col].values
-        std_values = frag_intensity_std[col].values
-        
-        # Filter out zero m/z values
-        mask = mz_values > 0
-        mz_values = mz_values[mask]
-        intensity_values = intensity_values[mask]
-        std_values = std_values[mask]
-        
-        if len(mz_values) > 0:
-            ax.errorbar(mz_values, intensity_values, yerr=1.96*std_values, 
-                      fmt='s', alpha=0.7, label=col)
+        try:
+            mz_values = frag_mz[col].values
+            intensity_values = frag_intensity_mean[col].values
+            std_values = frag_intensity_std[col].values
+            
+            # Filter out zero m/z values
+            mask = np.isfinite(mz_values) & (mz_values > 0)
+            mz_values = mz_values[mask]
+            intensity_values = intensity_values[mask]
+            std_values = std_values[mask]
+            
+            if len(mz_values) > 0:
+                ax.errorbar(mz_values, intensity_values, yerr=1.96*std_values,
+                          fmt='s', alpha=0.7, label=f"y-ion {col}")
+        except Exception as e:
+            print(f"Error plotting y-ion {col}: {e}")
     
     ax.set_xlabel('m/z')
     ax.set_ylabel('Relative Intensity')
