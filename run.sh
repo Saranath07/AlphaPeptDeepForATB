@@ -1,0 +1,1 @@
+pip install -r requirements/requirements.txt && python train_alphafold_enhanced_models.py
