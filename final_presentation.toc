@@ -1,0 +1,8 @@
+\beamer@sectionintoc {1}{Introduction}{3}{0}{1}
+\beamer@sectionintoc {2}{Problem Statement}{5}{0}{2}
+\beamer@sectionintoc {3}{Research Objectives}{9}{0}{3}
+\beamer@sectionintoc {4}{Thread A: Uncertainty Quantification}{11}{0}{4}
+\beamer@sectionintoc {5}{Thread B: Enhanced PTM Embedding}{15}{0}{5}
+\beamer@sectionintoc {6}{Combined Results and Analysis}{20}{0}{6}
+\beamer@sectionintoc {7}{Future Work: Thread D}{22}{0}{7}
+\beamer@sectionintoc {8}{Conclusions}{24}{0}{8}
